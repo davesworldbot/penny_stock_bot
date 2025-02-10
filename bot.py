@@ -1,56 +1,60 @@
+import os
 import logging
 from data_handler import get_account_balance, get_market_data
-from strategy import apply_strategy, calculate_indicators, INITIAL_CAPITAL, penny_stocks # Import everything you need
-from order_manager import execute_trade # Import execute_trade
+from strategy import apply_strategy, calculate_indicators, INITIAL_CAPITAL
 import time
-import json
 import subprocess
-from multiprocessing import Pool
+import matplotlib.pyplot as plt
 
-# Logging setup (same as your original code)
+# Configure logging
 logging.basicConfig(level=logging.DEBUG, format="%(asctime)s - %(levelname)s - %(message)s",
                     handlers=[logging.FileHandler("trading_bot.log"), logging.StreamHandler()])
 
-def log_debug_report(message):
-    with open("debug_report.txt", "a") as f:
-        f.write(message + "\n")
-
 def upload_logs():
+    """Upload logs to Google Drive using rclone."""
     GDRIVE_FOLDER = "gdrive:/TradingBotLogs"
     try:
         subprocess.run(["rclone", "mkdir", GDRIVE_FOLDER], check=True)
         subprocess.run(["rclone", "copy", "trading_bot.log", GDRIVE_FOLDER, "--copy-links"], check=True)
-        subprocess.run(["rclone", "copy", "debug_report.txt", GDRIVE_FOLDER, "--copy-links"], check=True)
         logging.info("Log files uploaded to Google Drive successfully.")
     except Exception as e:
         logging.error(f"Failed to upload logs: {e}")
 
 def main():
-    balance = get_account_balance()
-    if balance is None: # Handle if no balance is available.
-        logging.error("Could not retrieve account balance. Exiting.")
-        return # Stop execution if balance cannot be fetched.
+    print("Running backtest...")
 
-    logging.info(f"Current account balance: ${balance}")
-    for symbol in penny_stocks:
-        logging.info(f"Analyzing {symbol}...")
-        market_data = get_market_data(symbol)
-        if market_data is not None:
-            market_data = calculate_indicators(market_data)
-            if market_data is not None:  # Check if indicators were calculated successfully
-                final_value = apply_strategy(market_data, symbol)
-                if final_value is not None:  # Check if apply_strategy executed successfully
-                    logging.info(f"Analysis complete for {symbol}.")
-                else:
-                    logging.warning(f"apply_strategy returned None for {symbol}. Check the logs for errors.")
-            else:
-                logging.warning(f"calculate_indicators returned None for {symbol}. Check the logs for errors.")
-        else:
-            logging.warning(f"No market data available for {symbol}. Skipping.")
+    # Load historical stock data
+    data = pd.read_csv("historical_data.csv")  # Ensure this file exists
+    data["Date"] = pd.to_datetime(data["Date"])
 
-    upload_logs()
-    logging.info("Bot execution complete. Exiting.")
+    # Run backtest
+    balance = 100  # Start with $100
+    pdt_limit = 3  # Max 3 trades per day
 
-if __name__ == "__main__":
-    logging.info("Starting trading bot...")
-    main()
+    trade_dates = []
+    balance_history = []
+
+    for index, row in data.iterrows():
+        close_price = row["Close"]
+        date = row["Date"]
+
+        if balance >= close_price:
+            shares = int(balance / close_price)
+            balance = shares * close_price  # Invest entire balance
+
+            trade_dates.append(date)
+            balance_history.append(balance)
+
+            if len(trade_dates) >= pdt_limit:
+                break  # Stop trading to comply with PDT
+
+    # Plot the backtest results
+    plt.plot(trade_dates, balance_history, label="Balance Growth")
+    plt.xlabel("Date")
+    plt.ylabel("Account Balance")
+    plt.title("Backtest Performance")
+    plt.legend()
+    plt.show()
+
+    print("Backtest complete. Final balance:", balance)
+
